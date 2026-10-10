@@ -34,12 +34,31 @@ jobs:
             -o "$RUNNER_TEMP/VC_redist.x64.exe"
 
           mkdir -p "$RUNNER_TEMP/vcredist" "$RUNNER_TEMP/vcrt-extracted"
-          7zz x "$RUNNER_TEMP/VC_redist.x64.exe" "-o$RUNNER_TEMP/vcredist" -y >/dev/null
+          7zz x "$RUNNER_TEMP/VC_redist.x64.exe" "-o$RUNNER_TEMP/vcredist" -y
 
-          # Extract every CAB shipped inside the Microsoft redistributable.
-          while IFS= read -r -d '' cab; do
-            7zz x "$cab" "-o$RUNNER_TEMP/vcrt-extracted" -y >/dev/null
-          done < <(find "$RUNNER_TEMP/vcredist" -type f -iname '*.cab' -print0)
+          # Follow Madeira's documented extraction path first.
+          CAB_DIR="$RUNNER_TEMP/vcredist/.rsrc/1033/CABINET"
+          if [[ -d "$CAB_DIR" ]]; then
+            shopt -s nullglob
+            cabs=("$CAB_DIR"/*.cab)
+            shopt -u nullglob
+            for cab in "${cabs[@]}"; do
+              7zz x "$cab" "-o$RUNNER_TEMP/vcrt-extracted" -y
+            done
+          fi
+
+          # Some redistributable revisions use a different internal layout.
+          # Extract any CAB/MSI archives discovered in the package as well.
+          while IFS= read -r -d '' archive; do
+            case "${archive,,}" in
+              *.cab|*.msi)
+                7zz x "$archive" "-o$RUNNER_TEMP/vcrt-extracted" -y || true
+                ;;
+            esac
+          done < <(find "$RUNNER_TEMP/vcredist" -type f -print0)
+
+          echo "Files discovered in extracted package:"
+          find "$RUNNER_TEMP/vcredist" "$RUNNER_TEMP/vcrt-extracted" -type f | head -100
 
           mkdir -p "$RUNNER_TEMP/x86_64-vcruntime"
           files=(
@@ -58,7 +77,7 @@ jobs:
           )
 
           for file in "${files[@]}"; do
-            source_file="$(find "$RUNNER_TEMP/vcrt-extracted" -type f -iname "$file" -print -quit)"
+            source_file="$(find "$RUNNER_TEMP/vcrt-extracted" "$RUNNER_TEMP/vcredist" -type f -iname "$file" -print -quit)"
             if [[ -z "$source_file" ]]; then
               echo "::error::Missing expected Microsoft runtime file: $file"
               exit 1
@@ -82,7 +101,6 @@ jobs:
             exit 1
           fi
 
-          # Madeira looks for this folder at the root of its app bundle.
           mkdir -p "$APP_PATH/x86_64-vcruntime"
           cp "$RUNNER_TEMP/x86_64-vcruntime/"*.dll "$APP_PATH/x86_64-vcruntime/"
 
