@@ -50,7 +50,8 @@ jobs:
           # Some redistributable revisions use a different internal layout.
           # Extract any CAB/MSI archives discovered in the package as well.
           while IFS= read -r -d '' archive; do
-            case "${archive,,}" in
+            archive_lower="$(printf '%s' "$archive" | tr '[:upper:]' '[:lower:]')"
+            case "$archive_lower" in
               *.cab|*.msi)
                 7zz x "$archive" "-o$RUNNER_TEMP/vcrt-extracted" -y || true
                 ;;
