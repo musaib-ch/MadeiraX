@@ -25,69 +25,6 @@ jobs:
             "https://github.com/willfaust/Madeira/releases/download/${TAG}/Madeira-${TAG#v}.ipa" \
             -o "$RUNNER_TEMP/Madeira-original.ipa"
 
-      - name: Download and extract Microsoft's x64 VC++ runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          brew install sevenzip
-          curl -fL --retry 3 https://aka.ms/vs/17/release/vc_redist.x64.exe \
-            -o "$RUNNER_TEMP/VC_redist.x64.exe"
-
-          mkdir -p "$RUNNER_TEMP/vcredist" "$RUNNER_TEMP/vcrt-extracted"
-          7zz x "$RUNNER_TEMP/VC_redist.x64.exe" "-o$RUNNER_TEMP/vcredist" -y
-
-          # Follow Madeira's documented extraction path first.
-          CAB_DIR="$RUNNER_TEMP/vcredist/.rsrc/1033/CABINET"
-          if [[ -d "$CAB_DIR" ]]; then
-            shopt -s nullglob
-            cabs=("$CAB_DIR"/*.cab)
-            shopt -u nullglob
-            for cab in "${cabs[@]}"; do
-              7zz x "$cab" "-o$RUNNER_TEMP/vcrt-extracted" -y
-            done
-          fi
-
-          # Some redistributable revisions use a different internal layout.
-          # Extract any CAB/MSI archives discovered in the package as well.
-          while IFS= read -r -d '' archive; do
-            archive_lower="$(printf '%s' "$archive" | tr '[:upper:]' '[:lower:]')"
-            case "$archive_lower" in
-              *.cab|*.msi)
-                7zz x "$archive" "-o$RUNNER_TEMP/vcrt-extracted" -y || true
-                ;;
-            esac
-          done < <(find "$RUNNER_TEMP/vcredist" -type f -print0)
-
-          echo "Files discovered in extracted package:"
-          find "$RUNNER_TEMP/vcredist" "$RUNNER_TEMP/vcrt-extracted" -type f | head -100
-
-          mkdir -p "$RUNNER_TEMP/x86_64-vcruntime"
-          files=(
-            concrt140.dll
-            msvcp140.dll
-            msvcp140_1.dll
-            msvcp140_2.dll
-            msvcp140_atomic_wait.dll
-            msvcp140_codecvt_ids.dll
-            vcamp140.dll
-            vccorlib140.dll
-            vcomp140.dll
-            vcruntime140.dll
-            vcruntime140_1.dll
-            vcruntime140_threads.dll
-          )
-
-          for file in "${files[@]}"; do
-            source_file="$(find "$RUNNER_TEMP/vcrt-extracted" "$RUNNER_TEMP/vcredist" -type f -iname "$file" -print -quit)"
-            if [[ -z "$source_file" ]]; then
-              echo "::error::Missing expected Microsoft runtime file: $file"
-              exit 1
-            fi
-            cp "$source_file" "$RUNNER_TEMP/x86_64-vcruntime/$file"
-          done
-
-          echo "Verified all ${#files[@]} required runtime DLLs."
-
       - name: Add runtime to IPA
         shell: bash
         run: |
@@ -103,13 +40,12 @@ jobs:
           fi
 
           mkdir -p "$APP_PATH/x86_64-vcruntime"
-          cp "$RUNNER_TEMP/x86_64-vcruntime/"*.dll "$APP_PATH/x86_64-vcruntime/"
-
-          count="$(find "$APP_PATH/x86_64-vcruntime" -maxdepth 1 -type f -name '*.dll' | wc -l | tr -d ' ')"
-          if [[ "$count" != "12" ]]; then
-            echo "::error::Expected 12 runtime DLLs in the app; found $count."
-            exit 1
-          fi
+          cat > "$APP_PATH/x86_64-vcruntime/README.txt" <<'EOF'
+Add the genuine Microsoft x64 VC++ runtime DLL files to this folder.
+Keep the original DLL files unchanged. This placeholder does not itself fix
+missing-runtime errors until the required DLLs are added.
+EOF
+          echo "Created runtime folder at $APP_PATH/x86_64-vcruntime"
 
           OUTPUT="$GITHUB_WORKSPACE/Madeira-${{ inputs.release_tag }}-with-vcruntime.ipa"
           /usr/bin/zip -qry "$OUTPUT" Payload
